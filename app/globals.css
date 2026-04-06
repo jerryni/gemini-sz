@@ -346,7 +346,9 @@ button {
 .settings-panel {
   position: fixed;
   right: 24px;
-  bottom: 24px;
+	max-height: 80%;
+	overflow-y: auto;
+  /* bottom: 24px; */
   z-index: 40;
   width: min(420px, calc(100vw - 32px));
   display: flex;
@@ -944,9 +946,10 @@ button {
 
   .settings-panel {
     right: 16px;
-    bottom: 16px;
     left: 16px;
     width: auto;
+		top: 50%;
+		transform: translateY(-50%);
   }
 
   .settings-account-card {
