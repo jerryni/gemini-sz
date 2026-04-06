@@ -602,7 +602,6 @@ button {
   gap: 14px;
   overflow: auto;
   padding: 8px 6px 32px;
-  padding-bottom: calc(240px + env(safe-area-inset-bottom, 0px));
 }
 
 .empty-state {
@@ -937,10 +936,6 @@ button {
     bottom: 12px;
     left: 12px;
     padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
-  }
-
-  .message-list {
-    padding-bottom: calc(220px + env(safe-area-inset-bottom, 0px));
   }
 
   .message-bubble {
