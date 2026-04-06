@@ -14,6 +14,9 @@ const chatInputSchema = z.object({
 
 type ChatInput = z.infer<typeof chatInputSchema>;
 
+const SYSTEM_INSTRUCTION =
+  "You are a helpful assistant. Always answer in Simplified Chinese, regardless of the language used by the user. If the user asks for translation or quotes foreign text, keep the source text as needed, but all explanations and surrounding commentary must be in Simplified Chinese.";
+
 function buildHistoryParts(messages: MessageRecord[]) {
   return messages.map((message) => {
     const parts: Array<Record<string, unknown>> = [];
@@ -76,6 +79,9 @@ export async function runGeminiChat(
       },
       body: JSON.stringify({
         contents,
+        systemInstruction: {
+          parts: [{ text: SYSTEM_INSTRUCTION }]
+        },
         generationConfig: {
           temperature: 0.35,
           topP: 0.9
