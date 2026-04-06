@@ -1,0 +1,25 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gemini-sz",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-04-06",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "gemini-sz-db",
+      "database_id": "228c3a17-c8ba-44b2-98c3-b6672cc8e4cf"
+    }
+  ],
+  "vars": {
+    "APP_NAME": "Gemini SZ",
+    "GEMINI_MODEL": "gemini-2.5-flash"
+  },
+  "observability": {
+    "enabled": true
+  }
+}

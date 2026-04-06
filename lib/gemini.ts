@@ -1,0 +1,116 @@
+import { z } from "zod";
+import { getRequestEnv } from "@/lib/env";
+import type { MessageRecord } from "@/lib/db";
+
+const chatInputSchema = z.object({
+  prompt: z.string().min(1).max(5000),
+  image: z
+    .object({
+      mimeType: z.string().min(1).max(100),
+      data: z.string().min(1)
+    })
+    .optional()
+});
+
+type ChatInput = z.infer<typeof chatInputSchema>;
+
+function buildHistoryParts(messages: MessageRecord[]) {
+  return messages.map((message) => {
+    const parts: Array<Record<string, unknown>> = [];
+
+    if (message.imageMimeType && message.imageBase64) {
+      parts.push({
+        inlineData: {
+          mimeType: message.imageMimeType,
+          data: message.imageBase64
+        }
+      });
+    }
+
+    parts.push({ text: message.content });
+
+    return {
+      role: message.role === "assistant" ? "model" : "user",
+      parts
+    };
+  });
+}
+
+export async function runGeminiChat(
+  rawInput: unknown,
+  history: MessageRecord[]
+) {
+  const input = chatInputSchema.parse(rawInput);
+  const env = await getRequestEnv();
+
+  if (!env.GEMINI_API_KEY) {
+    throw new Error("Missing GEMINI_API_KEY secret.");
+  }
+
+  const contents = [...buildHistoryParts(history)];
+  const currentParts: Array<Record<string, unknown>> = [];
+
+  if (input.image) {
+    currentParts.push({
+      inlineData: {
+        mimeType: input.image.mimeType,
+        data: input.image.data
+      }
+    });
+  }
+
+  currentParts.push({ text: input.prompt });
+
+  contents.push({
+    role: "user",
+    parts: currentParts
+  });
+
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${env.GEMINI_MODEL}:generateContent`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": env.GEMINI_API_KEY
+      },
+      body: JSON.stringify({
+        contents,
+        generationConfig: {
+          temperature: 0.35,
+          topP: 0.9
+        }
+      })
+    }
+  );
+
+  const data = (await response.json()) as {
+    candidates?: Array<{
+      content?: {
+        parts?: Array<{ text?: string }>;
+      };
+    }>;
+    error?: {
+      message?: string;
+    };
+  };
+
+  if (!response.ok) {
+    throw new Error(data.error?.message || "Gemini request failed.");
+  }
+
+  const answer =
+    data.candidates?.[0]?.content?.parts
+      ?.map((part: { text?: string }) => part.text || "")
+      .join("")
+      .trim() || "";
+
+  if (!answer) {
+    throw new Error("Gemini returned an empty response.");
+  }
+
+  return {
+    answer,
+    model: env.GEMINI_MODEL
+  };
+}
