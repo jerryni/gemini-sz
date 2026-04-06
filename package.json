@@ -8,6 +8,7 @@
     "preview": "opennextjs-cloudflare build && wrangler dev",
     "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
     "migrate": "npx wrangler d1 execute gemini-sz-db --local --file=./migrations/0001_init.sql",
+    "migrate-remote": "npx wrangler d1 execute gemini-sz-db --remote --file=./migrations/0001_init.sql",
     "typecheck": "tsc --noEmit",
     "cf-typegen": "wrangler types"
   },
