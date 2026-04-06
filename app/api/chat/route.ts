@@ -8,6 +8,7 @@ import {
   type MessageRecord
 } from "@/lib/db";
 import { getRequestEnv } from "@/lib/env";
+import { resolveGeminiApiKeyForUser } from "@/lib/gemini-key-resolve";
 import { runGeminiChat } from "@/lib/gemini";
 
 type ChatRequest = {
@@ -59,13 +60,41 @@ export async function POST(request: Request) {
 
   const env = await getRequestEnv();
 
+  let apiKey: string;
+  let usageGeminiKeyId: string | null;
+  try {
+    const resolved = await resolveGeminiApiKeyForUser(user.id);
+    if (!resolved) {
+      return NextResponse.json(
+        {
+          error:
+            "No Gemini API key is available. Ask an admin to assign a key, or set GEMINI_API_KEY."
+        },
+        { status: 403 }
+      );
+    }
+    apiKey = resolved.apiKey;
+    usageGeminiKeyId = resolved.geminiKeyId;
+  } catch (resolveError) {
+    return NextResponse.json(
+      {
+        error:
+          resolveError instanceof Error
+            ? resolveError.message
+            : "Failed to resolve Gemini API key."
+      },
+      { status: 500 }
+    );
+  }
+
   try {
     const result = await runGeminiChat(
       {
         prompt,
         image: body.image
       },
-      history
+      history,
+      { apiKey }
     );
 
     await appendMessage({
@@ -79,6 +108,7 @@ export async function POST(request: Request) {
         userId: user.id,
         conversationId,
         model: result.model,
+        geminiKeyId: usageGeminiKeyId,
         promptTokens: result.usage.promptTokens,
         candidateTokens: result.usage.candidateTokens,
         totalTokens: result.usage.totalTokens,
@@ -99,6 +129,7 @@ export async function POST(request: Request) {
         userId: user.id,
         conversationId,
         model: env.GEMINI_MODEL,
+        geminiKeyId: usageGeminiKeyId,
         status: "error"
       });
     } catch (usageError) {

@@ -41,13 +41,15 @@ function buildHistoryParts(messages: MessageRecord[]) {
 
 export async function runGeminiChat(
   rawInput: unknown,
-  history: MessageRecord[]
+  history: MessageRecord[],
+  options?: { apiKey?: string }
 ) {
   const input = chatInputSchema.parse(rawInput);
   const env = await getRequestEnv();
+  const apiKey = options?.apiKey?.trim() || env.GEMINI_API_KEY?.trim();
 
-  if (!env.GEMINI_API_KEY) {
-    throw new Error("Missing GEMINI_API_KEY secret.");
+  if (!apiKey) {
+    throw new Error("Missing Gemini API key.");
   }
 
   const contents = [...buildHistoryParts(history)];
@@ -75,7 +77,7 @@ export async function runGeminiChat(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-goog-api-key": env.GEMINI_API_KEY
+        "x-goog-api-key": apiKey
       },
       body: JSON.stringify({
         contents,

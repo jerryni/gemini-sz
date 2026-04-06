@@ -2,10 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import Link from "next/link";
 import { signOutAction } from "@/components/auth-actions";
 import {
   ChartNoAxesColumn,
   ImagePlus,
+  KeyRound,
   LoaderCircle,
   PanelLeft,
   Pencil,
@@ -35,6 +37,7 @@ type ChatMessage = {
 type Props = {
   initialConversations: ConversationSummary[];
   userLabel: string;
+  isAdmin: boolean;
 };
 
 type PendingImage = {
@@ -50,6 +53,8 @@ type GroupedConversations = {
 
 type UsageSummary = {
   model: string;
+  apiKeyLabel: string;
+  apiKeyLast4: string | null;
   todayRequests: number;
   todayTokens: number;
   minuteRequests: number;
@@ -168,7 +173,11 @@ function UsageMeter({ label, value, limit, helper }: UsageMeterProps) {
   );
 }
 
-export function ChatShell({ initialConversations, userLabel }: Props) {
+export function ChatShell({
+  initialConversations,
+  userLabel,
+  isAdmin
+}: Props) {
   const [conversations, setConversations] = useState(initialConversations);
   const [conversationId, setConversationId] = useState<string | null>(
     initialConversations[0]?.id ?? null
@@ -479,10 +488,10 @@ export function ChatShell({ initialConversations, userLabel }: Props) {
 
         <div className="settings-panel-copy">
           <p className="eyebrow">Usage tracking</p>
-          <h2>Gemini free tier monitor</h2>
+          <h2>Gemini quota (this API key)</h2>
           <p>
-            Progress bars reflect requests made by this app only. Google AI Studio remains the
-            source of truth for project-wide quota and billing.
+            Numbers below count only traffic from this app for your current Gemini API key. Other
+            keys or Google AI Studio usage are not included.
           </p>
         </div>
 
@@ -499,8 +508,16 @@ export function ChatShell({ initialConversations, userLabel }: Props) {
           <div className="usage-summary">
             <div className="usage-summary-head">
               <div>
-                <p className="eyebrow">Current model</p>
-                <strong>{usageSummary.model}</strong>
+                <p className="eyebrow">API key</p>
+                <strong>
+                  {usageSummary.apiKeyLabel}
+                  {usageSummary.apiKeyLast4
+                    ? ` · …${usageSummary.apiKeyLast4}`
+                    : null}
+                </strong>
+                <p className="usage-summary-model-line">
+                  <span className="eyebrow">Model</span> {usageSummary.model}
+                </p>
               </div>
               <a
                 className="ghost-button"
@@ -514,13 +531,13 @@ export function ChatShell({ initialConversations, userLabel }: Props) {
             </div>
 
             <UsageMeter
-              helper={`Resets around ${usageSummary.dayResetLabel} Pacific Time.`}
+              helper={`Resets around ${usageSummary.dayResetLabel} Pacific Time (${usageSummary.apiKeyLabel}).`}
               label="Today requests"
               limit={usageSummary.requestLimit}
               value={usageSummary.todayRequests}
             />
             <UsageMeter
-              helper="Minute-level request pressure for the current model."
+              helper="Minute-level request pressure for this API key and model."
               label="This minute requests"
               limit={usageSummary.minuteRequestLimit}
               value={usageSummary.minuteRequests}
@@ -536,8 +553,8 @@ export function ChatShell({ initialConversations, userLabel }: Props) {
 
             {usageSummary.trackedOnly ? (
               <p className="settings-footnote">
-                This view excludes any Gemini usage triggered outside this application, even if it
-                uses the same API key or project.
+                Scoped to this login and this API key only. Assigning a different key in admin
+                starts a separate quota view.
               </p>
             ) : null}
           </div>
@@ -611,6 +628,15 @@ export function ChatShell({ initialConversations, userLabel }: Props) {
           <Settings size={16} />
           Settings
         </button>
+        {isAdmin ? (
+          <Link
+            className="ghost-button sidebar-settings-button"
+            href="/app/admin/gemini-keys"
+          >
+            <KeyRound size={16} />
+            API keys
+          </Link>
+        ) : null}
       </aside>
 
       {isDrawerOpen ? (
@@ -639,6 +665,16 @@ export function ChatShell({ initialConversations, userLabel }: Props) {
               <div>
                 <p className="eyebrow">Settings</p>
                 <h2>Quota overview</h2>
+                {isAdmin ? (
+                  <Link
+                    className="settings-admin-link"
+                    href="/app/admin/gemini-keys"
+                    onClick={() => setIsSettingsOpen(false)}
+                  >
+                    <KeyRound size={14} />
+                    Manage Gemini API keys
+                  </Link>
+                ) : null}
               </div>
               <button
                 aria-label="Close settings panel"

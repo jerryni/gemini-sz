@@ -12,6 +12,7 @@ export default async function AppPage() {
     <main className="workspace-page">
       <ChatShell
         initialConversations={conversations}
+        isAdmin={user.isAdmin}
         userLabel={user.displayName ?? user.username}
       />
     </main>

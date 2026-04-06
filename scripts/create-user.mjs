@@ -37,12 +37,15 @@ async function derivePasswordHash(password, saltBase64) {
 async function main() {
   const args = process.argv.slice(2);
   const shouldApply = args.includes("--apply");
-  const filteredArgs = args.filter((arg) => arg !== "--apply");
+  const isAdmin = args.includes("--admin");
+  const filteredArgs = args.filter(
+    (arg) => arg !== "--apply" && arg !== "--admin"
+  );
   const [rawUsername, rawPassword, rawDisplayName] = filteredArgs;
 
   if (!rawUsername || !rawPassword) {
     console.error(
-      "Usage: node scripts/create-user.mjs <username> <password> [display-name] [--apply]"
+      "Usage: node scripts/create-user.mjs <username> <password> [display-name] [--apply] [--admin]"
     );
     process.exit(1);
   }
@@ -53,8 +56,9 @@ async function main() {
   const passwordSalt = encodeBase64(salt);
   const passwordHash = await derivePasswordHash(rawPassword, passwordSalt);
 
-  const sql = `INSERT INTO users (id, username, display_name, password_salt, password_hash)
-VALUES ('${crypto.randomUUID()}', '${escapeSql(username)}', '${escapeSql(displayName)}', '${passwordSalt}', '${passwordHash}');`;
+  const adminFlag = isAdmin ? 1 : 0;
+  const sql = `INSERT INTO users (id, username, display_name, password_salt, password_hash, is_admin)
+VALUES ('${crypto.randomUUID()}', '${escapeSql(username)}', '${escapeSql(displayName)}', '${passwordSalt}', '${passwordHash}', ${adminFlag});`;
 
   if (!shouldApply) {
     console.log(sql);

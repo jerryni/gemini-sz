@@ -21,6 +21,7 @@ export type UsageRecordInput = {
   userId: string;
   conversationId: string;
   model: string;
+  geminiKeyId?: string | null;
   requestCount?: number;
   promptTokens?: number;
   candidateTokens?: number;
@@ -30,6 +31,8 @@ export type UsageRecordInput = {
 
 export type UsageSummary = {
   model: string;
+  apiKeyLabel: string;
+  apiKeyLast4: string | null;
   todayRequests: number;
   todayTokens: number;
   minuteRequests: number;
@@ -55,6 +58,7 @@ export const ensureAppSchema = cache(async () => {
       display_name TEXT,
       password_salt TEXT NOT NULL,
       password_hash TEXT NOT NULL,
+      is_admin INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`,
@@ -99,6 +103,7 @@ export const ensureAppSchema = cache(async () => {
       candidate_tokens INTEGER NOT NULL DEFAULT 0,
       total_tokens INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL CHECK(status IN ('success', 'error')),
+      gemini_key_id TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
       FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
@@ -106,10 +111,47 @@ export const ensureAppSchema = cache(async () => {
     `CREATE INDEX IF NOT EXISTS idx_usage_user_created_at
       ON gemini_usage_events (user_id, created_at DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_usage_user_model_created_at
-      ON gemini_usage_events (user_id, model, created_at DESC)`
+      ON gemini_usage_events (user_id, model, created_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_usage_user_key_model_created_at
+      ON gemini_usage_events (user_id, gemini_key_id, model, created_at DESC)`,
+    `CREATE TABLE IF NOT EXISTS gemini_api_keys (
+      id TEXT PRIMARY KEY,
+      label TEXT NOT NULL,
+      ciphertext_b64 TEXT NOT NULL,
+      iv_b64 TEXT NOT NULL,
+      last4 TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `CREATE TABLE IF NOT EXISTS gemini_key_assignments (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL UNIQUE,
+      gemini_key_id TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (gemini_key_id) REFERENCES gemini_api_keys(id) ON DELETE CASCADE
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_gemini_key_assignments_key
+      ON gemini_key_assignments (gemini_key_id)`
   ];
 
   await env.DB.batch(statements.map((sql) => env.DB.prepare(sql)));
+
+  try {
+    await env.DB.prepare(
+      `ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0`
+    ).run();
+  } catch {
+    /* column already present */
+  }
+
+  try {
+    await env.DB.prepare(
+      `ALTER TABLE gemini_usage_events ADD COLUMN gemini_key_id TEXT`
+    ).run();
+  } catch {
+    /* column already present */
+  }
 });
 
 export async function listConversations(userId: string) {
@@ -268,8 +310,9 @@ export async function recordUsageEvent(input: UsageRecordInput) {
       prompt_tokens,
       candidate_tokens,
       total_tokens,
-      status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      status,
+      gemini_key_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       crypto.randomUUID(),
@@ -280,7 +323,8 @@ export async function recordUsageEvent(input: UsageRecordInput) {
       input.promptTokens ?? 0,
       input.candidateTokens ?? 0,
       input.totalTokens ?? 0,
-      input.status
+      input.status,
+      input.geminiKeyId ?? null
     )
     .run();
 }
@@ -403,6 +447,7 @@ function getPacificWindowRanges(now = new Date()) {
 async function getUsageAggregate(
   userId: string,
   model: string,
+  geminiKeyId: string | null,
   start: string,
   end: string
 ) {
@@ -416,9 +461,10 @@ async function getUsageAggregate(
     WHERE user_id = ?
       AND model = ?
       AND created_at >= ?
-      AND created_at < ?`
+      AND created_at < ?
+      AND COALESCE(gemini_key_id, '') = COALESCE(?, '')`
   )
-    .bind(userId, model, start, end)
+    .bind(userId, model, start, end, geminiKeyId)
     .first<UsageAggregateRow>();
 
   return {
@@ -427,21 +473,45 @@ async function getUsageAggregate(
   };
 }
 
-export async function getUsageSummary(userId: string, model: string): Promise<UsageSummary> {
+export type UsageSummaryKeyContext = {
+  geminiKeyId: string | null;
+  apiKeyLabel: string;
+  apiKeyLast4: string | null;
+};
+
+export async function getUsageSummary(
+  userId: string,
+  model: string,
+  keyContext: UsageSummaryKeyContext
+): Promise<UsageSummary> {
   await ensureAppSchema();
 
   const { dayStartIso, nextDayStartIso, minuteStartIso, nextMinuteStartIso } =
     getPacificWindowRanges();
 
   const [today, minute] = await Promise.all([
-    getUsageAggregate(userId, model, dayStartIso, nextDayStartIso),
-    getUsageAggregate(userId, model, minuteStartIso, nextMinuteStartIso)
+    getUsageAggregate(
+      userId,
+      model,
+      keyContext.geminiKeyId,
+      dayStartIso,
+      nextDayStartIso
+    ),
+    getUsageAggregate(
+      userId,
+      model,
+      keyContext.geminiKeyId,
+      minuteStartIso,
+      nextMinuteStartIso
+    )
   ]);
 
   const limits = getUsageLimits(model);
 
   return {
     model,
+    apiKeyLabel: keyContext.apiKeyLabel,
+    apiKeyLast4: keyContext.apiKeyLast4,
     todayRequests: today.requestCount,
     todayTokens: today.totalTokens,
     minuteRequests: minute.requestCount,

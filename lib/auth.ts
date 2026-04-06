@@ -1,16 +1,18 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { cache } from "react";
+import { ensureAppSchema } from "@/lib/db";
 import { getRequestEnv } from "@/lib/env";
 
 const SESSION_COOKIE = "gemini_sz_session";
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
 const PBKDF2_ITERATIONS = 100_000;
 
-type SessionUser = {
+export type SessionUser = {
   id: string;
   username: string;
   displayName: string | null;
+  isAdmin: boolean;
 };
 
 function encodeBase64(bytes: Uint8Array) {
@@ -68,8 +70,8 @@ export async function createSeedUserSql(input: {
   const escapedDisplayName = (input.displayName ?? input.username).replaceAll("'", "''");
   const escapedUsername = input.username.trim().toLowerCase().replaceAll("'", "''");
 
-  return `INSERT INTO users (id, username, display_name, password_salt, password_hash)
-VALUES ('${crypto.randomUUID()}', '${escapedUsername}', '${escapedDisplayName}', '${passwordSalt}', '${passwordHash}');`;
+  return `INSERT INTO users (id, username, display_name, password_salt, password_hash, is_admin)
+VALUES ('${crypto.randomUUID()}', '${escapedUsername}', '${escapedDisplayName}', '${passwordSalt}', '${passwordHash}', 0);`;
 }
 
 export const getCurrentUser = cache(async (): Promise<SessionUser | null> => {
@@ -80,6 +82,7 @@ export const getCurrentUser = cache(async (): Promise<SessionUser | null> => {
     return null;
   }
 
+  await ensureAppSchema();
   const env = await getRequestEnv();
   const tokenHash = await sha256Hex(token);
   const session = await env.DB.prepare(
@@ -87,13 +90,20 @@ export const getCurrentUser = cache(async (): Promise<SessionUser | null> => {
       users.id,
       users.username,
       users.display_name AS displayName,
+      COALESCE(users.is_admin, 0) AS isAdmin,
       app_sessions.expires_at AS expiresAt
     FROM app_sessions
     INNER JOIN users ON users.id = app_sessions.user_id
     WHERE app_sessions.session_token_hash = ?`
   )
     .bind(tokenHash)
-    .first<SessionUser & { expiresAt: string }>();
+    .first<{
+      id: string;
+      username: string;
+      displayName: string | null;
+      isAdmin: number;
+      expiresAt: string;
+    }>();
 
   if (!session) {
     return null;
@@ -109,7 +119,8 @@ export const getCurrentUser = cache(async (): Promise<SessionUser | null> => {
   return {
     id: session.id,
     username: session.username,
-    displayName: session.displayName
+    displayName: session.displayName,
+    isAdmin: Number(session.isAdmin) === 1
   };
 });
 
@@ -123,12 +134,24 @@ export async function requireUser() {
   return user;
 }
 
+export async function requireAdmin() {
+  const user = await requireUser();
+
+  if (!user.isAdmin) {
+    redirect("/app");
+  }
+
+  return user;
+}
+
 export async function signInWithPassword(username: string, password: string) {
   const normalizedUsername = username.trim().toLowerCase();
+  await ensureAppSchema();
   const env = await getRequestEnv();
 
   const user = await env.DB.prepare(
-    `SELECT id, username, display_name AS displayName, password_salt AS passwordSalt, password_hash AS passwordHash
+    `SELECT id, username, display_name AS displayName, password_salt AS passwordSalt, password_hash AS passwordHash,
+            COALESCE(is_admin, 0) AS isAdmin
      FROM users
      WHERE username = ?`
   )
@@ -139,6 +162,7 @@ export async function signInWithPassword(username: string, password: string) {
       displayName: string | null;
       passwordSalt: string;
       passwordHash: string;
+      isAdmin: number;
     }>();
 
   if (!user) {
@@ -176,7 +200,8 @@ export async function signInWithPassword(username: string, password: string) {
     user: {
       id: user.id,
       username: user.username,
-      displayName: user.displayName
+      displayName: user.displayName,
+      isAdmin: Number(user.isAdmin) === 1
     }
   };
 }

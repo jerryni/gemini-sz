@@ -1,1 +1,2 @@
 GEMINI_API_KEY="your-gemini-api-key"
+GEMINI_KEYS_MASTER_SECRET="long-random-secret-for-encrypting-stored-api-keys"

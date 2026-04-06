@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS "users" (
   "display_name" text DEFAULT NULL,
   "password_salt" text NOT NULL,
   "password_hash" text NOT NULL,
+  "is_admin" integer NOT NULL DEFAULT 0,
   "created_at" text NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "updated_at" text NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY ("id")
