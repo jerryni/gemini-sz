@@ -29,6 +29,50 @@ export type UsageRecordInput = {
   status: "success" | "error";
 };
 
+/** D1 max string/blob ~2MB; stay under to avoid SQLITE_TOOBIG */
+const D1_MAX_TEXT_BYTES = 1_900_000;
+
+const utf8ByteLength = (value: string) => new TextEncoder().encode(value).length;
+
+const truncateUtf8 = (value: string, maxBytes: number, suffix: string) => {
+  if (utf8ByteLength(value) <= maxBytes) {
+    return value;
+  }
+  const encoder = new TextEncoder();
+  const suffixBytes = encoder.encode(suffix).length;
+  const budget = Math.max(0, maxBytes - suffixBytes);
+  let lo = 0;
+  let hi = value.length;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (utf8ByteLength(value.slice(0, mid)) <= budget) {
+      lo = mid;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return `${value.slice(0, lo)}${suffix}`;
+};
+
+function clampMessageForD1(input: {
+  content: string;
+  imageMimeType?: string | null;
+  imageBase64?: string | null;
+}) {
+  const content = truncateUtf8(
+    input.content,
+    D1_MAX_TEXT_BYTES,
+    "\n…[内容已截断以符合数据库单字段大小限制]"
+  );
+  let imageMimeType = input.imageMimeType ?? null;
+  let imageBase64 = input.imageBase64 ?? null;
+  if (imageBase64 && utf8ByteLength(imageBase64) > D1_MAX_TEXT_BYTES) {
+    imageBase64 = null;
+    imageMimeType = null;
+  }
+  return { content, imageMimeType, imageBase64 };
+}
+
 export type UsageSummary = {
   model: string;
   apiKeyLabel: string;
@@ -267,6 +311,11 @@ export async function appendMessage(input: {
   await ensureAppSchema();
   const env = await getRequestEnv();
   const id = crypto.randomUUID();
+  const stored = clampMessageForD1({
+    content: input.content,
+    imageMimeType: input.imageMimeType,
+    imageBase64: input.imageBase64
+  });
 
   await env.DB.batch([
     env.DB.prepare(
@@ -282,9 +331,9 @@ export async function appendMessage(input: {
       id,
       input.conversationId,
       input.role,
-      input.content,
-      input.imageMimeType ?? null,
-      input.imageBase64 ?? null
+      stored.content,
+      stored.imageMimeType,
+      stored.imageBase64
     ),
     env.DB.prepare(
       `UPDATE conversations
@@ -332,8 +381,16 @@ export async function recordUsageEvent(input: UsageRecordInput) {
 function getUsageLimits(model: string) {
   if (model === "gemini-2.5-flash") {
     return {
-      requestLimit: 250,
-      minuteRequestLimit: 10,
+      requestLimit: 20,
+      minuteRequestLimit: 5,
+      minuteTokenLimit: 250_000
+    };
+  }
+
+  if (model === "gemini-3.1-flash-lite-preview") {
+    return {
+      requestLimit: 500,
+      minuteRequestLimit: 15,
       minuteTokenLimit: 250_000
     };
   }

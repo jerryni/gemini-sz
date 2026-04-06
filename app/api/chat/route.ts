@@ -10,10 +10,12 @@ import {
 import { getRequestEnv } from "@/lib/env";
 import { resolveGeminiApiKeyForUser } from "@/lib/gemini-key-resolve";
 import { runGeminiChat } from "@/lib/gemini";
+import { resolveGeminiModelForRequest } from "@/lib/gemini-models";
 
 type ChatRequest = {
   conversationId?: string;
   prompt?: string;
+  model?: string;
   image?: {
     mimeType: string;
     data: string;
@@ -60,6 +62,13 @@ export async function POST(request: Request) {
 
   const env = await getRequestEnv();
 
+  let resolvedModel: string;
+  try {
+    resolvedModel = resolveGeminiModelForRequest(body.model, env.GEMINI_MODEL);
+  } catch {
+    return NextResponse.json({ error: "Unsupported model." }, { status: 400 });
+  }
+
   let apiKey: string;
   let usageGeminiKeyId: string | null;
   try {
@@ -94,7 +103,7 @@ export async function POST(request: Request) {
         image: body.image
       },
       history,
-      { apiKey }
+      { apiKey, model: body.model }
     );
 
     await appendMessage({
@@ -128,7 +137,7 @@ export async function POST(request: Request) {
       await recordUsageEvent({
         userId: user.id,
         conversationId,
-        model: env.GEMINI_MODEL,
+        model: resolvedModel,
         geminiKeyId: usageGeminiKeyId,
         status: "error"
       });

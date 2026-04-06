@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { signOutAction } from "@/components/auth-actions";
@@ -17,6 +17,8 @@ import {
   X
 } from "lucide-react";
 import { MessageContent } from "@/components/message-content";
+import { compressImageFileForUpload } from "@/lib/compress-upload-image";
+import { mergeGeminiModelOptions } from "@/lib/gemini-models";
 
 type ConversationSummary = {
   id: string;
@@ -38,6 +40,7 @@ type Props = {
   initialConversations: ConversationSummary[];
   userLabel: string;
   isAdmin: boolean;
+  configuredGeminiModel: string;
 };
 
 type PendingImage = {
@@ -124,6 +127,12 @@ function groupConversations(conversations: ConversationSummary[]): GroupedConver
   return Array.from(groups.entries()).map(([label, items]) => ({ label, items }));
 }
 
+function revokePendingPreview(image: PendingImage | null) {
+  if (image?.previewUrl) {
+    URL.revokeObjectURL(image.previewUrl);
+  }
+}
+
 function formatCompactNumber(value: number) {
   return new Intl.NumberFormat("en-US", {
     notation: value >= 1000 ? "compact" : "standard",
@@ -176,8 +185,23 @@ function UsageMeter({ label, value, limit, helper }: UsageMeterProps) {
 export function ChatShell({
   initialConversations,
   userLabel,
-  isAdmin
+  isAdmin,
+  configuredGeminiModel
 }: Props) {
+  const modelOptions = useMemo(
+    () => mergeGeminiModelOptions(configuredGeminiModel),
+    [configuredGeminiModel]
+  );
+
+  const [selectedModelId, setSelectedModelId] = useState(() => {
+    const options = mergeGeminiModelOptions(configuredGeminiModel);
+    const configured = configuredGeminiModel.trim();
+    if (configured && options.some((entry) => entry.id === configured)) {
+      return configured;
+    }
+    return options[0]?.id ?? "gemini-2.5-flash";
+  });
+
   const [conversations, setConversations] = useState(initialConversations);
   const [conversationId, setConversationId] = useState<string | null>(
     initialConversations[0]?.id ?? null
@@ -247,9 +271,12 @@ export function ChatShell({
     void (async () => {
       setIsUsageLoading(true);
 
-      const response = await fetch("/api/usage/summary", {
-        cache: "no-store"
-      });
+      const response = await fetch(
+        `/api/usage/summary?model=${encodeURIComponent(selectedModelId)}`,
+        {
+          cache: "no-store"
+        }
+      );
       const payload = (await response.json()) as UsageSummary & { error?: string };
 
       if (cancelled) {
@@ -270,27 +297,46 @@ export function ChatShell({
     return () => {
       cancelled = true;
     };
-  }, [isSettingsOpen]);
+  }, [isSettingsOpen, selectedModelId]);
 
-  async function handleImageChange(file: File | null) {
+  async function handleImageChange(
+    file: File | null,
+    input?: HTMLInputElement | null
+  ) {
     if (!file) {
-      setPendingImage(null);
+      setPendingImage((prev) => {
+        revokePendingPreview(prev);
+        return null;
+      });
       return;
     }
 
-    const data = await file.arrayBuffer();
-    const base64 = btoa(
-      new Uint8Array(data).reduce(
-        (accumulator, byte) => accumulator + String.fromCharCode(byte),
-        ""
-      )
-    );
+    setError(null);
 
-    setPendingImage({
-      mimeType: file.type,
-      data: base64,
-      previewUrl: URL.createObjectURL(file)
-    });
+    try {
+      const compressed = await compressImageFileForUpload(file);
+      setPendingImage((prev) => {
+        revokePendingPreview(prev);
+        return {
+          mimeType: compressed.mimeType,
+          data: compressed.data,
+          previewUrl: URL.createObjectURL(compressed.previewBlob)
+        };
+      });
+    } catch (compressError) {
+      setPendingImage((prev) => {
+        revokePendingPreview(prev);
+        return null;
+      });
+      setError(
+        compressError instanceof Error
+          ? compressError.message
+          : "图片压缩失败。"
+      );
+      if (input) {
+        input.value = "";
+      }
+    }
   }
 
   async function submitPrompt() {
@@ -315,7 +361,10 @@ export function ChatShell({
     setPrompt("");
 
     const currentImage = pendingImage;
-    setPendingImage(null);
+    setPendingImage((prev) => {
+      revokePendingPreview(prev);
+      return null;
+    });
 
     setIsPending(true);
 
@@ -328,6 +377,7 @@ export function ChatShell({
         body: JSON.stringify({
           conversationId,
           prompt: trimmedPrompt,
+          model: selectedModelId,
           image: currentImage
             ? {
                 mimeType: currentImage.mimeType,
@@ -484,6 +534,24 @@ export function ChatShell({
               Sign out
             </button>
           </form>
+        </div>
+
+        <div className="settings-panel-copy">
+          <p className="eyebrow">Model</p>
+          <h2>Gemini model</h2>
+          <p>Choose which model handles new messages in this browser.</p>
+          <select
+            aria-label="Gemini model"
+            className="admin-select settings-model-select"
+            onChange={(event) => setSelectedModelId(event.target.value)}
+            value={selectedModelId}
+          >
+            {modelOptions.map((entry) => (
+              <option key={entry.id} value={entry.id}>
+                {entry.label}
+              </option>
+            ))}
+          </select>
         </div>
 
         <div className="settings-panel-copy">
@@ -695,7 +763,15 @@ export function ChatShell({
           <div className="image-chip">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img alt="Selected file preview" src={pendingImage.previewUrl} />
-            <button onClick={() => setPendingImage(null)} type="button">
+            <button
+              onClick={() =>
+                setPendingImage((prev) => {
+                  revokePendingPreview(prev);
+                  return null;
+                })
+              }
+              type="button"
+            >
               Remove
             </button>
           </div>
@@ -710,7 +786,12 @@ export function ChatShell({
           <input
             accept="image/png,image/jpeg,image/webp,image/heic,image/heif"
             id="image-input"
-            onChange={(event) => void handleImageChange(event.target.files?.[0] ?? null)}
+            onChange={(event) =>
+              void handleImageChange(
+                event.target.files?.[0] ?? null,
+                event.target
+              )
+            }
             type="file"
           />
           <textarea

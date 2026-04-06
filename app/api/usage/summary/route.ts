@@ -3,8 +3,9 @@ import { getCurrentUser } from "@/lib/auth";
 import { getUsageSummary } from "@/lib/db";
 import { getRequestEnv } from "@/lib/env";
 import { resolveGeminiApiKeyForUser } from "@/lib/gemini-key-resolve";
+import { resolveGeminiModelForRequest } from "@/lib/gemini-models";
 
-export async function GET() {
+export async function GET(request: Request) {
   const user = await getCurrentUser();
 
   if (!user) {
@@ -12,6 +13,14 @@ export async function GET() {
   }
 
   const env = await getRequestEnv();
+  const modelParam = new URL(request.url).searchParams.get("model") ?? undefined;
+
+  let summaryModel: string;
+  try {
+    summaryModel = resolveGeminiModelForRequest(modelParam, env.GEMINI_MODEL);
+  } catch {
+    return NextResponse.json({ error: "Unsupported model." }, { status: 400 });
+  }
 
   let resolved;
   try {
@@ -33,7 +42,7 @@ export async function GET() {
     );
   }
 
-  const summary = await getUsageSummary(user.id, env.GEMINI_MODEL, {
+  const summary = await getUsageSummary(user.id, summaryModel, {
     geminiKeyId: resolved.geminiKeyId,
     apiKeyLabel: resolved.usageLabel,
     apiKeyLast4: resolved.usageLast4

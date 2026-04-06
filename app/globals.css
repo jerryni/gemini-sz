@@ -405,6 +405,13 @@ button {
   line-height: 1.55;
 }
 
+.settings-model-select {
+  width: 100%;
+  max-width: 100%;
+  margin-top: 10px;
+  box-sizing: border-box;
+}
+
 .usage-summary {
   display: flex;
   flex-direction: column;

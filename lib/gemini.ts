@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { getRequestEnv } from "@/lib/env";
 import type { MessageRecord } from "@/lib/db";
+import { resolveGeminiModelForRequest } from "@/lib/gemini-models";
 
 const chatInputSchema = z.object({
   prompt: z.string().min(1).max(5000),
@@ -42,11 +43,12 @@ function buildHistoryParts(messages: MessageRecord[]) {
 export async function runGeminiChat(
   rawInput: unknown,
   history: MessageRecord[],
-  options?: { apiKey?: string }
+  options?: { apiKey?: string; model?: string }
 ) {
   const input = chatInputSchema.parse(rawInput);
   const env = await getRequestEnv();
   const apiKey = options?.apiKey?.trim() || env.GEMINI_API_KEY?.trim();
+  const model = resolveGeminiModelForRequest(options?.model, env.GEMINI_MODEL);
 
   if (!apiKey) {
     throw new Error("Missing Gemini API key.");
@@ -72,7 +74,7 @@ export async function runGeminiChat(
   });
 
   const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${env.GEMINI_MODEL}:generateContent`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
     {
       method: "POST",
       headers: {
@@ -124,7 +126,7 @@ export async function runGeminiChat(
 
   return {
     answer,
-    model: env.GEMINI_MODEL,
+    model,
     usage: {
       promptTokens: data.usageMetadata?.promptTokenCount ?? 0,
       candidateTokens: data.usageMetadata?.candidatesTokenCount ?? 0,
