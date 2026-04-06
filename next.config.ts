@@ -4,7 +4,8 @@ import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 initOpenNextCloudflareForDev();
 
 const nextConfig: NextConfig = {
-  experimental: {}
+  experimental: {},
+  devIndicators: false
 };
 
 export default nextConfig;

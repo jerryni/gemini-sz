@@ -1,12 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
+import { signOutAction } from "@/components/auth-actions";
 import {
+  ChartNoAxesColumn,
   ImagePlus,
   LoaderCircle,
   PanelLeft,
   Pencil,
+  Plus,
   SendHorizontal,
+  Settings,
   X
 } from "lucide-react";
 import { MessageContent } from "@/components/message-content";
@@ -29,6 +34,7 @@ type ChatMessage = {
 
 type Props = {
   initialConversations: ConversationSummary[];
+  userLabel: string;
 };
 
 type PendingImage = {
@@ -40,6 +46,26 @@ type PendingImage = {
 type GroupedConversations = {
   label: string;
   items: ConversationSummary[];
+};
+
+type UsageSummary = {
+  model: string;
+  todayRequests: number;
+  todayTokens: number;
+  minuteRequests: number;
+  minuteTokens: number;
+  requestLimit: number;
+  minuteRequestLimit: number;
+  minuteTokenLimit: number;
+  dayResetLabel: string;
+  trackedOnly: boolean;
+};
+
+type UsageMeterProps = {
+  label: string;
+  value: number;
+  limit: number;
+  helper: string;
 };
 
 function formatConversationTitle(title: string) {
@@ -93,7 +119,56 @@ function groupConversations(conversations: ConversationSummary[]): GroupedConver
   return Array.from(groups.entries()).map(([label, items]) => ({ label, items }));
 }
 
-export function ChatShell({ initialConversations }: Props) {
+function formatCompactNumber(value: number) {
+  return new Intl.NumberFormat("en-US", {
+    notation: value >= 1000 ? "compact" : "standard",
+    maximumFractionDigits: value >= 1000 ? 1 : 0
+  }).format(value);
+}
+
+function getMeterTone(ratio: number) {
+  if (ratio >= 0.9) {
+    return "danger";
+  }
+
+  if (ratio >= 0.7) {
+    return "warning";
+  }
+
+  return "safe";
+}
+
+function UsageMeter({ label, value, limit, helper }: UsageMeterProps) {
+  const safeLimit = Math.max(limit, 1);
+  const ratio = Math.min(value / safeLimit, 1);
+  const tone = getMeterTone(ratio);
+
+  return (
+    <div className="usage-meter">
+      <div className="usage-meter-head">
+        <div>
+          <p>{label}</p>
+          <strong>
+            {formatCompactNumber(value)} / {formatCompactNumber(limit)}
+          </strong>
+        </div>
+        <span className={`usage-meter-badge ${tone}`}>{Math.round(ratio * 100)}%</span>
+      </div>
+      <div
+        aria-hidden="true"
+        className="usage-meter-track"
+      >
+        <div
+          className={`usage-meter-fill ${tone}`}
+          style={{ width: `${Math.max(ratio * 100, ratio > 0 ? 6 : 0)}%` }}
+        />
+      </div>
+      <p className="usage-meter-helper">{helper}</p>
+    </div>
+  );
+}
+
+export function ChatShell({ initialConversations, userLabel }: Props) {
   const [conversations, setConversations] = useState(initialConversations);
   const [conversationId, setConversationId] = useState<string | null>(
     initialConversations[0]?.id ?? null
@@ -105,10 +180,19 @@ export function ChatShell({ initialConversations }: Props) {
   const [isPending, setIsPending] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isRenaming, setIsRenaming] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [usageSummary, setUsageSummary] = useState<UsageSummary | null>(null);
+  const [isUsageLoading, setIsUsageLoading] = useState(false);
+  const [usageError, setUsageError] = useState<string | null>(null);
+  const [isMounted, setIsMounted] = useState(false);
 
   const currentConversation =
     conversations.find((conversation) => conversation.id === conversationId) ?? null;
   const groupedConversations = groupConversations(conversations);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   useEffect(() => {
     if (!conversationId) {
@@ -143,6 +227,41 @@ export function ChatShell({ initialConversations }: Props) {
       cancelled = true;
     };
   }, [conversationId]);
+
+  useEffect(() => {
+    if (!isSettingsOpen) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      setIsUsageLoading(true);
+
+      const response = await fetch("/api/usage/summary", {
+        cache: "no-store"
+      });
+      const payload = (await response.json()) as UsageSummary & { error?: string };
+
+      if (cancelled) {
+        return;
+      }
+
+      if (!response.ok) {
+        setUsageError(payload.error ?? "Failed to load usage summary.");
+        setIsUsageLoading(false);
+        return;
+      }
+
+      setUsageSummary(payload);
+      setUsageError(null);
+      setIsUsageLoading(false);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isSettingsOpen]);
 
   async function handleImageChange(file: File | null) {
     if (!file) {
@@ -298,6 +417,13 @@ export function ChatShell({ initialConversations }: Props) {
     setIsRenaming(false);
   }
 
+  function startNewChat() {
+    setConversationId(null);
+    setMessages([]);
+    setError(null);
+    setIsDrawerOpen(false);
+  }
+
   function renderConversationList() {
     return groupedConversations.map((group) => (
       <section key={group.label} className="conversation-group">
@@ -336,22 +462,155 @@ export function ChatShell({ initialConversations }: Props) {
     ));
   }
 
-  return (
-    <div className="chat-shell">
-      <aside className="chat-sidebar">
+  function renderUsagePanel() {
+    return (
+      <div className="settings-panel-card">
+        <div className="settings-account-card">
+          <div className="settings-account-copy">
+            <p className="eyebrow">Signed in as</p>
+            <strong>{userLabel}</strong>
+          </div>
+          <form action={signOutAction}>
+            <button className="ghost-button" type="submit">
+              Sign out
+            </button>
+          </form>
+        </div>
+
+        <div className="settings-panel-copy">
+          <p className="eyebrow">Usage tracking</p>
+          <h2>Gemini free tier monitor</h2>
+          <p>
+            Progress bars reflect requests made by this app only. Google AI Studio remains the
+            source of truth for project-wide quota and billing.
+          </p>
+        </div>
+
+        {isUsageLoading ? (
+          <div className="settings-loading">
+            <LoaderCircle className="spin" size={18} />
+            <span>Loading usage summary…</span>
+          </div>
+        ) : null}
+
+        {usageError ? <p className="error-text">{usageError}</p> : null}
+
+        {usageSummary ? (
+          <div className="usage-summary">
+            <div className="usage-summary-head">
+              <div>
+                <p className="eyebrow">Current model</p>
+                <strong>{usageSummary.model}</strong>
+              </div>
+              <a
+                className="ghost-button"
+                href="https://aistudio.google.com/"
+                rel="noreferrer"
+                target="_blank"
+              >
+                <ChartNoAxesColumn size={16} />
+                Open AI Studio
+              </a>
+            </div>
+
+            <UsageMeter
+              helper={`Resets around ${usageSummary.dayResetLabel} Pacific Time.`}
+              label="Today requests"
+              limit={usageSummary.requestLimit}
+              value={usageSummary.todayRequests}
+            />
+            <UsageMeter
+              helper="Minute-level request pressure for the current model."
+              label="This minute requests"
+              limit={usageSummary.minuteRequestLimit}
+              value={usageSummary.minuteRequests}
+            />
+            <UsageMeter
+              helper={`Approximate token budget tracked from Gemini usage metadata. Today: ${formatCompactNumber(
+                usageSummary.todayTokens
+              )} tokens.`}
+              label="This minute tokens"
+              limit={usageSummary.minuteTokenLimit}
+              value={usageSummary.minuteTokens}
+            />
+
+            {usageSummary.trackedOnly ? (
+              <p className="settings-footnote">
+                This view excludes any Gemini usage triggered outside this application, even if it
+                uses the same API key or project.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  const floatingUi = (
+    <>
+      <div className="top-toolbar">
+        <div className="top-toolbar-group">
+          <button
+            aria-label="Open conversation drawer"
+            className={`icon-button history-fab ${isDrawerOpen ? "open" : ""}`}
+            onClick={() => setIsDrawerOpen(true)}
+            type="button"
+          >
+            <PanelLeft size={18} />
+          </button>
+        </div>
+
+        <div className="top-toolbar-group top-toolbar-actions">
+          <button
+            aria-label="Start new chat"
+            className="icon-button toolbar-icon-button"
+            onClick={startNewChat}
+            type="button"
+          >
+            <Plus size={18} />
+          </button>
+          <button
+            aria-label="Open settings"
+            className="icon-button toolbar-icon-button"
+            onClick={() => setIsSettingsOpen(true)}
+            type="button"
+          >
+            <Settings size={18} />
+          </button>
+        </div>
+      </div>
+
+      <aside
+        className={`chat-sidebar ${isDrawerOpen ? "open" : ""}`}
+        aria-hidden={!isDrawerOpen}
+      >
+        <div className="drawer-head desktop-drawer-head">
+          <p className="eyebrow">History</p>
+          <button
+            aria-label="Close conversation drawer"
+            className="icon-button"
+            onClick={() => setIsDrawerOpen(false)}
+            type="button"
+          >
+            <X size={18} />
+          </button>
+        </div>
         <button
           className="ghost-button"
-          onClick={() => {
-            setConversationId(null);
-            setMessages([]);
-            setError(null);
-            setIsDrawerOpen(false);
-          }}
+          onClick={startNewChat}
           type="button"
         >
           New chat
         </button>
         <div className="conversation-list">{renderConversationList()}</div>
+        <button
+          className="ghost-button sidebar-settings-button"
+          onClick={() => setIsSettingsOpen(true)}
+          type="button"
+        >
+          <Settings size={16} />
+          Settings
+        </button>
       </aside>
 
       {isDrawerOpen ? (
@@ -363,17 +622,87 @@ export function ChatShell({ initialConversations }: Props) {
         />
       ) : null}
 
+      {isSettingsOpen ? (
+        <>
+          <button
+            aria-label="Close settings panel"
+            className="settings-backdrop"
+            onClick={() => setIsSettingsOpen(false)}
+            type="button"
+          />
+          <section
+            aria-modal="true"
+            className="settings-panel"
+            role="dialog"
+          >
+            <div className="settings-panel-head">
+              <div>
+                <p className="eyebrow">Settings</p>
+                <h2>Quota overview</h2>
+              </div>
+              <button
+                aria-label="Close settings panel"
+                className="icon-button"
+                onClick={() => setIsSettingsOpen(false)}
+                type="button"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            {renderUsagePanel()}
+          </section>
+        </>
+      ) : null}
+
+      <div className="composer">
+        {pendingImage ? (
+          <div className="image-chip">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img alt="Selected file preview" src={pendingImage.previewUrl} />
+            <button onClick={() => setPendingImage(null)} type="button">
+              Remove
+            </button>
+          </div>
+        ) : null}
+
+        {error ? <p className="error-text">{error}</p> : null}
+
+        <div className="composer-row">
+          <label className="icon-button toolbar-icon-button" htmlFor="image-input">
+            <ImagePlus size={18} />
+          </label>
+          <input
+            accept="image/png,image/jpeg,image/webp,image/heic,image/heif"
+            id="image-input"
+            onChange={(event) => void handleImageChange(event.target.files?.[0] ?? null)}
+            type="file"
+          />
+          <textarea
+            onChange={(event) => setPrompt(event.target.value)}
+            placeholder="Ask anything..."
+            rows={1}
+            value={prompt}
+          />
+          <button
+            className="primary-button composer-send"
+            disabled={isPending || prompt.trim().length === 0}
+            onClick={() => void submitPrompt()}
+            type="button"
+          >
+            <SendHorizontal size={18} />
+          </button>
+        </div>
+      </div>
+    </>
+  );
+
+  return (
+    <div className="chat-shell">
+      {isMounted ? createPortal(floatingUi, document.body) : null}
+
       <section className="chat-panel">
         <div className="chat-header">
           <div className="chat-header-row">
-            <button
-              aria-label="Open conversation drawer"
-              className="icon-button history-toggle"
-              onClick={() => setIsDrawerOpen(true)}
-              type="button"
-            >
-              <PanelLeft size={18} />
-            </button>
             <div>
               <p className="eyebrow">Gemini + Cloudflare</p>
               <h1>{currentConversation ? formatConversationTitle(currentConversation.title) : "New chat"}</h1>
@@ -384,44 +713,6 @@ export function ChatShell({ initialConversations }: Props) {
               </p>
             </div>
           </div>
-          <button
-            aria-label="Close conversation drawer"
-            className="icon-button drawer-close"
-            onClick={() => setIsDrawerOpen(false)}
-            type="button"
-          >
-            <X size={18} />
-          </button>
-        </div>
-
-        <div
-          className={`chat-sidebar-mobile ${isDrawerOpen ? "open" : ""}`}
-          aria-hidden={!isDrawerOpen}
-        >
-          <div className="drawer-head">
-            <p className="eyebrow">History</p>
-            <button
-              aria-label="Close conversation drawer"
-              className="icon-button"
-              onClick={() => setIsDrawerOpen(false)}
-              type="button"
-            >
-              <X size={18} />
-            </button>
-          </div>
-          <button
-            className="ghost-button"
-            onClick={() => {
-              setConversationId(null);
-              setMessages([]);
-              setError(null);
-              setIsDrawerOpen(false);
-            }}
-            type="button"
-          >
-            New chat
-          </button>
-          <div className="conversation-list">{renderConversationList()}</div>
         </div>
 
         <div className="message-list">
@@ -460,46 +751,6 @@ export function ChatShell({ initialConversations }: Props) {
               <span>Working…</span>
             </div>
           ) : null}
-        </div>
-
-        <div className="composer">
-          {pendingImage ? (
-            <div className="image-chip">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img alt="Selected file preview" src={pendingImage.previewUrl} />
-              <button onClick={() => setPendingImage(null)} type="button">
-                Remove
-              </button>
-            </div>
-          ) : null}
-
-          {error ? <p className="error-text">{error}</p> : null}
-
-          <div className="composer-row">
-            <label className="icon-button" htmlFor="image-input">
-              <ImagePlus size={18} />
-            </label>
-            <input
-              accept="image/png,image/jpeg,image/webp,image/heic,image/heif"
-              id="image-input"
-              onChange={(event) => void handleImageChange(event.target.files?.[0] ?? null)}
-              type="file"
-            />
-            <textarea
-              onChange={(event) => setPrompt(event.target.value)}
-              placeholder="Ask anything..."
-              rows={1}
-              value={prompt}
-            />
-            <button
-              className="primary-button"
-              disabled={isPending || prompt.trim().length === 0}
-              onClick={() => void submitPrompt()}
-              type="button"
-            >
-              <SendHorizontal size={18} />
-            </button>
-          </div>
         </div>
       </section>
     </div>

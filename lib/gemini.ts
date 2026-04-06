@@ -96,6 +96,11 @@ export async function runGeminiChat(
         parts?: Array<{ text?: string }>;
       };
     }>;
+    usageMetadata?: {
+      promptTokenCount?: number;
+      candidatesTokenCount?: number;
+      totalTokenCount?: number;
+    };
     error?: {
       message?: string;
     };
@@ -117,6 +122,11 @@ export async function runGeminiChat(
 
   return {
     answer,
-    model: env.GEMINI_MODEL
+    model: env.GEMINI_MODEL,
+    usage: {
+      promptTokens: data.usageMetadata?.promptTokenCount ?? 0,
+      candidateTokens: data.usageMetadata?.candidatesTokenCount ?? 0,
+      totalTokens: data.usageMetadata?.totalTokenCount ?? 0
+    }
   };
 }

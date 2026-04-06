@@ -4,8 +4,10 @@ import {
   appendMessage,
   createConversation,
   getConversationMessages,
+  recordUsageEvent,
   type MessageRecord
 } from "@/lib/db";
+import { getRequestEnv } from "@/lib/env";
 import { runGeminiChat } from "@/lib/gemini";
 
 type ChatRequest = {
@@ -55,6 +57,8 @@ export async function POST(request: Request) {
     imageBase64: body.image?.data ?? null
   });
 
+  const env = await getRequestEnv();
+
   try {
     const result = await runGeminiChat(
       {
@@ -70,12 +74,37 @@ export async function POST(request: Request) {
       content: result.answer
     });
 
+    try {
+      await recordUsageEvent({
+        userId: user.id,
+        conversationId,
+        model: result.model,
+        promptTokens: result.usage.promptTokens,
+        candidateTokens: result.usage.candidateTokens,
+        totalTokens: result.usage.totalTokens,
+        status: "success"
+      });
+    } catch (usageError) {
+      console.error("Failed to record Gemini usage event.", usageError);
+    }
+
     return NextResponse.json({
       conversationId,
       message: result.answer,
       model: result.model
     });
   } catch (error) {
+    try {
+      await recordUsageEvent({
+        userId: user.id,
+        conversationId,
+        model: env.GEMINI_MODEL,
+        status: "error"
+      });
+    } catch (usageError) {
+      console.error("Failed to record Gemini usage event.", usageError);
+    }
+
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : "Gemini request failed."

@@ -17,6 +17,35 @@ export type MessageRecord = {
   createdAt: string;
 };
 
+export type UsageRecordInput = {
+  userId: string;
+  conversationId: string;
+  model: string;
+  requestCount?: number;
+  promptTokens?: number;
+  candidateTokens?: number;
+  totalTokens?: number;
+  status: "success" | "error";
+};
+
+export type UsageSummary = {
+  model: string;
+  todayRequests: number;
+  todayTokens: number;
+  minuteRequests: number;
+  minuteTokens: number;
+  requestLimit: number;
+  minuteRequestLimit: number;
+  minuteTokenLimit: number;
+  dayResetLabel: string;
+  trackedOnly: boolean;
+};
+
+type UsageAggregateRow = {
+  requestCount: number | null;
+  totalTokens: number | null;
+};
+
 export const ensureAppSchema = cache(async () => {
   const env = await getRequestEnv();
   const statements = [
@@ -59,7 +88,25 @@ export const ensureAppSchema = cache(async () => {
       FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
     )`,
     `CREATE INDEX IF NOT EXISTS idx_messages_conversation_created_at
-      ON messages (conversation_id, created_at ASC)`
+      ON messages (conversation_id, created_at ASC)`,
+    `CREATE TABLE IF NOT EXISTS gemini_usage_events (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      conversation_id TEXT NOT NULL,
+      model TEXT NOT NULL,
+      request_count INTEGER NOT NULL DEFAULT 1,
+      prompt_tokens INTEGER NOT NULL DEFAULT 0,
+      candidate_tokens INTEGER NOT NULL DEFAULT 0,
+      total_tokens INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL CHECK(status IN ('success', 'error')),
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_usage_user_created_at
+      ON gemini_usage_events (user_id, created_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_usage_user_model_created_at
+      ON gemini_usage_events (user_id, model, created_at DESC)`
   ];
 
   await env.DB.batch(statements.map((sql) => env.DB.prepare(sql)));
@@ -205,4 +252,204 @@ export async function appendMessage(input: {
   ]);
 
   return id;
+}
+
+export async function recordUsageEvent(input: UsageRecordInput) {
+  await ensureAppSchema();
+  const env = await getRequestEnv();
+
+  await env.DB.prepare(
+    `INSERT INTO gemini_usage_events (
+      id,
+      user_id,
+      conversation_id,
+      model,
+      request_count,
+      prompt_tokens,
+      candidate_tokens,
+      total_tokens,
+      status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  )
+    .bind(
+      crypto.randomUUID(),
+      input.userId,
+      input.conversationId,
+      input.model,
+      input.requestCount ?? 1,
+      input.promptTokens ?? 0,
+      input.candidateTokens ?? 0,
+      input.totalTokens ?? 0,
+      input.status
+    )
+    .run();
+}
+
+function getUsageLimits(model: string) {
+  if (model === "gemini-2.5-flash") {
+    return {
+      requestLimit: 250,
+      minuteRequestLimit: 10,
+      minuteTokenLimit: 250_000
+    };
+  }
+
+  return {
+    requestLimit: 100,
+    minuteRequestLimit: 5,
+    minuteTokenLimit: 100_000
+  };
+}
+
+function getPacificParts(now = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Los_Angeles",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).formatToParts(now);
+
+  const part = (type: string) =>
+    Number(parts.find((entry) => entry.type === type)?.value ?? "0");
+
+  return {
+    year: part("year"),
+    month: part("month"),
+    day: part("day"),
+    hour: part("hour"),
+    minute: part("minute")
+  };
+}
+
+function getTimeZoneOffsetMinutes(date: Date, timeZone: string) {
+  const offsetPart = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    timeZoneName: "shortOffset"
+  })
+    .formatToParts(date)
+    .find((entry) => entry.type === "timeZoneName")?.value;
+
+  const match = offsetPart?.match(/^GMT([+-])(\d{1,2})(?::(\d{2}))?$/);
+
+  if (!match) {
+    return 0;
+  }
+
+  const sign = match[1] === "-" ? -1 : 1;
+  const hours = Number(match[2]);
+  const minutes = Number(match[3] ?? "0");
+  return sign * (hours * 60 + minutes);
+}
+
+function pacificLocalToUtc(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number
+) {
+  const timeZone = "America/Los_Angeles";
+  let utcMillis = Date.UTC(year, month - 1, day, hour, minute, 0, 0);
+
+  for (let index = 0; index < 2; index += 1) {
+    const offsetMinutes = getTimeZoneOffsetMinutes(new Date(utcMillis), timeZone);
+    utcMillis = Date.UTC(year, month - 1, day, hour, minute, 0, 0) - offsetMinutes * 60_000;
+  }
+
+  return new Date(utcMillis);
+}
+
+function formatPacificResetLabel(now = new Date()) {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Los_Angeles",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    month: "short",
+    day: "numeric"
+  });
+
+  const pacific = getPacificParts(now);
+  const nextReset = pacificLocalToUtc(pacific.year, pacific.month, pacific.day + 1, 0, 0);
+
+  return formatter.format(nextReset);
+}
+
+function getPacificWindowRanges(now = new Date()) {
+  const pacific = getPacificParts(now);
+
+  const dayStart = pacificLocalToUtc(pacific.year, pacific.month, pacific.day, 0, 0);
+  const nextDayStart = pacificLocalToUtc(pacific.year, pacific.month, pacific.day + 1, 0, 0);
+  const minuteStart = pacificLocalToUtc(
+    pacific.year,
+    pacific.month,
+    pacific.day,
+    pacific.hour,
+    pacific.minute
+  );
+  const nextMinuteStart = new Date(minuteStart.getTime() + 60 * 1000);
+
+  return {
+    dayStartIso: dayStart.toISOString().slice(0, 19).replace("T", " "),
+    nextDayStartIso: nextDayStart.toISOString().slice(0, 19).replace("T", " "),
+    minuteStartIso: minuteStart.toISOString().slice(0, 19).replace("T", " "),
+    nextMinuteStartIso: nextMinuteStart.toISOString().slice(0, 19).replace("T", " ")
+  };
+}
+
+async function getUsageAggregate(
+  userId: string,
+  model: string,
+  start: string,
+  end: string
+) {
+  const env = await getRequestEnv();
+
+  const row = await env.DB.prepare(
+    `SELECT
+      COALESCE(SUM(request_count), 0) AS requestCount,
+      COALESCE(SUM(total_tokens), 0) AS totalTokens
+    FROM gemini_usage_events
+    WHERE user_id = ?
+      AND model = ?
+      AND created_at >= ?
+      AND created_at < ?`
+  )
+    .bind(userId, model, start, end)
+    .first<UsageAggregateRow>();
+
+  return {
+    requestCount: Number(row?.requestCount ?? 0),
+    totalTokens: Number(row?.totalTokens ?? 0)
+  };
+}
+
+export async function getUsageSummary(userId: string, model: string): Promise<UsageSummary> {
+  await ensureAppSchema();
+
+  const { dayStartIso, nextDayStartIso, minuteStartIso, nextMinuteStartIso } =
+    getPacificWindowRanges();
+
+  const [today, minute] = await Promise.all([
+    getUsageAggregate(userId, model, dayStartIso, nextDayStartIso),
+    getUsageAggregate(userId, model, minuteStartIso, nextMinuteStartIso)
+  ]);
+
+  const limits = getUsageLimits(model);
+
+  return {
+    model,
+    todayRequests: today.requestCount,
+    todayTokens: today.totalTokens,
+    minuteRequests: minute.requestCount,
+    minuteTokens: minute.totalTokens,
+    requestLimit: limits.requestLimit,
+    minuteRequestLimit: limits.minuteRequestLimit,
+    minuteTokenLimit: limits.minuteTokenLimit,
+    dayResetLabel: formatPacificResetLabel(),
+    trackedOnly: true
+  };
 }
