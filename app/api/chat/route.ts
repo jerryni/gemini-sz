@@ -8,9 +8,10 @@ import {
   type MessageRecord
 } from "@/lib/db";
 import { getRequestEnv } from "@/lib/env";
+import { resolveChatModel, resolveChatProvider } from "@/lib/chat-provider";
 import { resolveGeminiApiKeyForUser } from "@/lib/gemini-key-resolve";
 import { runGeminiChat } from "@/lib/gemini";
-import { resolveGeminiModelForRequest } from "@/lib/gemini-models";
+import { resolveQwenApiKey, runQwenChat } from "@/lib/qwen";
 
 type ChatRequest = {
   conversationId?: string;
@@ -61,50 +62,81 @@ export async function POST(request: Request) {
   });
 
   const env = await getRequestEnv();
+  const provider = resolveChatProvider(request);
 
   let resolvedModel: string;
   try {
-    resolvedModel = resolveGeminiModelForRequest(body.model, env.GEMINI_MODEL);
+    resolvedModel = resolveChatModel({
+      request,
+      bodyModel: body.model,
+      env,
+      hasImage: Boolean(body.image)
+    });
   } catch {
     return NextResponse.json({ error: "Unsupported model." }, { status: 400 });
   }
 
   let apiKey: string;
   let usageGeminiKeyId: string | null;
-  try {
-    const resolved = await resolveGeminiApiKeyForUser(user.id);
-    if (!resolved) {
+  if (provider === "qwen") {
+    apiKey = resolveQwenApiKey(env);
+    usageGeminiKeyId = null;
+
+    if (!apiKey) {
       return NextResponse.json(
         {
           error:
-            "No Gemini API key is available. Ask an admin to assign a key, or set GEMINI_API_KEY."
+            "No Qwen API key is available. Set DASHSCOPE_API_KEY or QWEN_API_KEY in the environment."
         },
         { status: 403 }
       );
     }
-    apiKey = resolved.apiKey;
-    usageGeminiKeyId = resolved.geminiKeyId;
-  } catch (resolveError) {
-    return NextResponse.json(
-      {
-        error:
-          resolveError instanceof Error
-            ? resolveError.message
-            : "Failed to resolve Gemini API key."
-      },
-      { status: 500 }
-    );
+  } else {
+    try {
+      const resolved = await resolveGeminiApiKeyForUser(user.id);
+      if (!resolved) {
+        return NextResponse.json(
+          {
+            error:
+              "No Gemini API key is available. Ask an admin to assign a key, or set GEMINI_API_KEY."
+          },
+          { status: 403 }
+        );
+      }
+      apiKey = resolved.apiKey;
+      usageGeminiKeyId = resolved.geminiKeyId;
+    } catch (resolveError) {
+      return NextResponse.json(
+        {
+          error:
+            resolveError instanceof Error
+              ? resolveError.message
+              : "Failed to resolve Gemini API key."
+        },
+        { status: 500 }
+      );
+    }
   }
 
   try {
-    const result = await runGeminiChat(
-      {
-        prompt,
-        image: body.image
-      },
-      history,
-      { apiKey, model: body.model }
-    );
+    const result =
+      provider === "qwen"
+        ? await runQwenChat(
+            {
+              prompt,
+              image: body.image
+            },
+            history,
+            { apiKey, model: resolvedModel }
+          )
+        : await runGeminiChat(
+            {
+              prompt,
+              image: body.image
+            },
+            history,
+            { apiKey, model: resolvedModel }
+          );
 
     await appendMessage({
       conversationId,
@@ -147,7 +179,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json(
       {
-        error: error instanceof Error ? error.message : "Gemini request failed."
+        error: error instanceof Error ? error.message : "Model request failed."
       },
       { status: 500 }
     );

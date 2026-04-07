@@ -1,2 +1,6 @@
 GEMINI_API_KEY="your-gemini-api-key"
 GEMINI_KEYS_MASTER_SECRET="long-random-secret-for-encrypting-stored-api-keys"
+DASHSCOPE_API_KEY="your-dashscope-api-key"
+QWEN_BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+QWEN_TEXT_MODEL="qwen-plus"
+QWEN_IMAGE_MODEL="qwen-vl-plus"
