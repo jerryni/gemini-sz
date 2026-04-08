@@ -282,6 +282,20 @@ export async function renameConversation(
   return Boolean(result.meta.changes);
 }
 
+export async function deleteConversation(userId: string, conversationId: string) {
+  await ensureAppSchema();
+  const env = await getRequestEnv();
+
+  const result = await env.DB.prepare(
+    `DELETE FROM conversations
+     WHERE id = ? AND user_id = ?`
+  )
+    .bind(conversationId, userId)
+    .run();
+
+  return Boolean(result.meta.changes);
+}
+
 export async function createConversation(
   userId: string,
   title: string,

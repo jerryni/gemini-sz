@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { signOutAction } from "@/components/auth-actions";
 import {
   ChartNoAxesColumn,
+  Check,
+  Copy,
   ImagePlus,
   KeyRound,
   LoaderCircle,
@@ -14,6 +16,7 @@ import {
   Plus,
   SendHorizontal,
   Settings,
+  Trash2,
   X
 } from "lucide-react";
 import { MessageContent } from "@/components/message-content";
@@ -218,6 +221,8 @@ export function ChatShell({
   const [isUsageLoading, setIsUsageLoading] = useState(false);
   const [usageError, setUsageError] = useState<string | null>(null);
   const [isMounted, setIsMounted] = useState(false);
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+  const [deletingConversationId, setDeletingConversationId] = useState<string | null>(null);
 
   const currentConversation =
     conversations.find((conversation) => conversation.id === conversationId) ?? null;
@@ -438,6 +443,41 @@ export function ChatShell({
     })();
   }
 
+  function isDesktopViewport() {
+    if (typeof window === "undefined") {
+      return false;
+    }
+
+    return !window.matchMedia("(max-width: 900px)").matches;
+  }
+
+  function handlePromptKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== "Enter") {
+      return;
+    }
+
+    if (event.shiftKey || event.nativeEvent.isComposing || !isDesktopViewport()) {
+      return;
+    }
+
+    event.preventDefault();
+    if (!isPending && prompt.trim()) {
+      void submitPrompt();
+    }
+  }
+
+  async function handleCopyMessage(message: ChatMessage) {
+    try {
+      await navigator.clipboard.writeText(message.content);
+      setCopiedMessageId(message.id);
+      window.setTimeout(() => {
+        setCopiedMessageId((current) => (current === message.id ? null : current));
+      }, 1500);
+    } catch {
+      setError("复制失败，请检查浏览器剪贴板权限。");
+    }
+  }
+
   async function handleRenameConversation(target: ConversationSummary) {
     const nextTitle = window.prompt("Rename conversation", target.title)?.trim();
 
@@ -476,6 +516,41 @@ export function ChatShell({
     setIsRenaming(false);
   }
 
+  async function handleDeleteConversation(target: ConversationSummary) {
+    const confirmed = window.confirm(
+      `Delete conversation "${formatConversationTitle(target.title)}"?`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingConversationId(target.id);
+
+    const response = await fetch(`/api/conversations/${target.id}`, {
+      method: "DELETE"
+    });
+    const payload = (await response.json()) as { error?: string };
+
+    if (!response.ok) {
+      setError(payload.error ?? "Failed to delete conversation.");
+      setDeletingConversationId(null);
+      return;
+    }
+
+    setConversations((current) =>
+      current.filter((conversation) => conversation.id !== target.id)
+    );
+
+    if (conversationId === target.id) {
+      setConversationId(null);
+      setMessages([]);
+    }
+
+    setError(null);
+    setDeletingConversationId(null);
+  }
+
   function startNewChat() {
     setConversationId(null);
     setMessages([]);
@@ -505,15 +580,26 @@ export function ChatShell({
               >
                 <span>{formatConversationTitle(conversation.title)}</span>
               </button>
-              <button
-                aria-label={`Rename ${conversation.title}`}
-                className="conversation-card-edit"
-                disabled={isRenaming}
-                onClick={() => void handleRenameConversation(conversation)}
-                type="button"
-              >
-                <Pencil size={14} />
-              </button>
+              <div className="conversation-card-actions">
+                <button
+                  aria-label={`Rename ${conversation.title}`}
+                  className="conversation-card-edit"
+                  disabled={isRenaming || deletingConversationId === conversation.id}
+                  onClick={() => void handleRenameConversation(conversation)}
+                  type="button"
+                >
+                  <Pencil size={14} />
+                </button>
+                <button
+                  aria-label={`Delete ${conversation.title}`}
+                  className="conversation-card-delete"
+                  disabled={deletingConversationId === conversation.id}
+                  onClick={() => void handleDeleteConversation(conversation)}
+                  type="button"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -688,23 +774,6 @@ export function ChatShell({
           New chat
         </button>
         <div className="conversation-list">{renderConversationList()}</div>
-        <button
-          className="ghost-button sidebar-settings-button"
-          onClick={() => setIsSettingsOpen(true)}
-          type="button"
-        >
-          <Settings size={16} />
-          Settings
-        </button>
-        {isAdmin ? (
-          <Link
-            className="ghost-button sidebar-settings-button"
-            href="/app/admin/gemini-keys"
-          >
-            <KeyRound size={16} />
-            API keys
-          </Link>
-        ) : null}
       </aside>
 
       {isDrawerOpen ? (
@@ -796,6 +865,7 @@ export function ChatShell({
           />
           <textarea
             onChange={(event) => setPrompt(event.target.value)}
+            onKeyDown={handlePromptKeyDown}
             placeholder="Ask anything..."
             rows={1}
             value={prompt}
@@ -859,6 +929,17 @@ export function ChatShell({
               ) : (
                 <p className="user-message-text">{message.content}</p>
               )}
+              <div className="message-actions">
+                <button
+                  aria-label="Copy message"
+                  className="ghost-button message-copy-button"
+                  onClick={() => void handleCopyMessage(message)}
+                  type="button"
+                >
+                  {copiedMessageId === message.id ? <Check size={14} /> : <Copy size={14} />}
+                  <span>{copiedMessageId === message.id ? "已复制" : "复制"}</span>
+                </button>
+              </div>
             </article>
           ))}
 

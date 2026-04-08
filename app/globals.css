@@ -341,10 +341,10 @@ button {
 
 .settings-panel {
   position: fixed;
+  top: 96px;
   right: 24px;
-	max-height: 80%;
-	overflow-y: auto;
-  /* bottom: 24px; */
+  bottom: calc(max(24px, env(safe-area-inset-bottom, 0px)) + 108px);
+  overflow-y: auto;
   z-index: 40;
   width: min(420px, calc(100vw - 32px));
   display: flex;
@@ -538,7 +538,25 @@ button {
   color: var(--muted);
 }
 
-.conversation-card-edit:disabled {
+.conversation-card-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.conversation-card-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #b74d2e;
+}
+
+.conversation-card-edit:disabled,
+.conversation-card-delete:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
@@ -662,6 +680,29 @@ button {
   margin: 0;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.message-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
+.message-copy-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.56);
+  font-size: 0.8rem;
+  color: inherit;
+}
+
+.message-copy-button:hover {
+  background: rgba(255, 255, 255, 0.82);
 }
 
 .assistant-markdown {
@@ -811,7 +852,7 @@ button {
   right: 24px;
   bottom: max(24px, env(safe-area-inset-bottom, 0px));
   left: 24px;
-  z-index: 35;
+  z-index: 32;
   padding: 12px 14px;
   border: 1px solid rgba(60, 41, 18, 0.12);
   border-radius: var(--radius-xl);
@@ -961,9 +1002,10 @@ button {
   .settings-panel {
     right: 16px;
     left: 16px;
+    top: 76px;
+    bottom: calc(12px + env(safe-area-inset-bottom, 0px) + 96px);
     width: auto;
-		top: 50%;
-		transform: translateY(-50%);
+    transform: none;
   }
 
   .settings-account-card {
