@@ -206,9 +206,7 @@ export function ChatShell({
   });
 
   const [conversations, setConversations] = useState(initialConversations);
-  const [conversationId, setConversationId] = useState<string | null>(
-    initialConversations[0]?.id ?? null
-  );
+  const [conversationId, setConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [prompt, setPrompt] = useState("");
   const [pendingImage, setPendingImage] = useState<PendingImage | null>(null);
