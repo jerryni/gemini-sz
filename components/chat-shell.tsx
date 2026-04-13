@@ -231,6 +231,7 @@ export function ChatShell({
     availableModels.find((entry) => entry.id === selectedModelId) ?? null;
   const selectedProvider = selectedModel?.provider ?? "gemini";
   const selectedProviderLabel = selectedProvider === "qwen" ? "Qwen" : "Gemini";
+  const selectedModelLabel = selectedModel?.label ?? selectedProviderLabel;
 
   useEffect(() => {
     setIsMounted(true);
@@ -602,6 +603,7 @@ export function ChatShell({
   }
 
   function startNewChat() {
+    setSelectedModelId(defaultModelId || availableModels[0]?.id || "gemini-2.5-flash");
     setConversationId(null);
     setMessages([]);
     setError(null);
@@ -949,7 +951,7 @@ export function ChatShell({
         <div className="chat-header">
           <div className="chat-header-row">
             <div>
-              <p className="eyebrow">Gemini + Cloudflare</p>
+              <p className="eyebrow">{selectedModelLabel}</p>
               <h1>{currentConversation ? formatConversationTitle(currentConversation.title) : "New chat"}</h1>
               <p className="conversation-subtitle">
                 {currentConversation

@@ -211,6 +211,10 @@ export function resolveDefaultChatModel(input: {
   env: CloudflareEnv;
   hasImage: boolean;
 }) {
+  if (getChatModelOptions(input.env).some((option) => option.id === "qwen")) {
+    return "qwen";
+  }
+
   const provider = resolveChatProvider({
     request: input.request,
     env: input.env
