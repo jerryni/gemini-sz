@@ -4,7 +4,7 @@ import type { MessageRecord } from "@/lib/db";
 import { resolveGeminiModelForRequest } from "@/lib/gemini-models";
 
 const chatInputSchema = z.object({
-  prompt: z.string().min(1).max(5000),
+  prompt: z.string().max(5000).default(""),
   image: z
     .object({
       mimeType: z.string().min(1).max(100),
@@ -31,7 +31,9 @@ function buildHistoryParts(messages: MessageRecord[]) {
       });
     }
 
-    parts.push({ text: message.content });
+    if (message.content) {
+      parts.push({ text: message.content });
+    }
 
     return {
       role: message.role === "assistant" ? "model" : "user",
@@ -66,7 +68,9 @@ export async function runGeminiChat(
     });
   }
 
-  currentParts.push({ text: input.prompt });
+  if (input.prompt) {
+    currentParts.push({ text: input.prompt });
+  }
 
   contents.push({
     role: "user",

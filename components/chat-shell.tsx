@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ClipboardEvent,
+  type KeyboardEvent
+} from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { signOutAction } from "@/components/auth-actions";
@@ -221,6 +228,9 @@ export function ChatShell({
   const [isMounted, setIsMounted] = useState(false);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [deletingConversationId, setDeletingConversationId] = useState<string | null>(null);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const promptTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const hasAutoFocusedEmptyChatRef = useRef(false);
 
   const currentConversation =
     conversations.find((conversation) => conversation.id === conversationId) ?? null;
@@ -229,6 +239,21 @@ export function ChatShell({
   useEffect(() => {
     setIsMounted(true);
   }, []);
+
+  useEffect(() => {
+    if (!isMounted || conversationId || hasAutoFocusedEmptyChatRef.current) {
+      return;
+    }
+
+    promptTextareaRef.current?.focus();
+    hasAutoFocusedEmptyChatRef.current = true;
+  }, [conversationId, isMounted]);
+
+  useEffect(() => {
+    return () => {
+      revokePendingPreview(pendingImage);
+    };
+  }, [pendingImage]);
 
   useEffect(() => {
     if (!conversationId) {
@@ -311,6 +336,9 @@ export function ChatShell({
         revokePendingPreview(prev);
         return null;
       });
+      if (input) {
+        input.value = "";
+      }
       return;
     }
 
@@ -326,6 +354,9 @@ export function ChatShell({
           previewUrl: URL.createObjectURL(compressed.previewBlob)
         };
       });
+      if (input) {
+        input.value = "";
+      }
     } catch (compressError) {
       setPendingImage((prev) => {
         revokePendingPreview(prev);
@@ -342,10 +373,35 @@ export function ChatShell({
     }
   }
 
+  function clearPendingImage() {
+    setPendingImage((prev) => {
+      revokePendingPreview(prev);
+      return null;
+    });
+
+    if (imageInputRef.current) {
+      imageInputRef.current.value = "";
+    }
+  }
+
+  function handlePromptPaste(event: ClipboardEvent<HTMLTextAreaElement>) {
+    const imageItem = Array.from(event.clipboardData.items).find((item) =>
+      item.type.startsWith("image/")
+    );
+    const file = imageItem?.getAsFile();
+
+    if (!file) {
+      return;
+    }
+
+    event.preventDefault();
+    void handleImageChange(file, imageInputRef.current);
+  }
+
   async function submitPrompt() {
     const trimmedPrompt = prompt.trim();
 
-    if (!trimmedPrompt) {
+    if (!trimmedPrompt && !pendingImage) {
       return;
     }
 
@@ -459,7 +515,7 @@ export function ChatShell({
     }
 
     event.preventDefault();
-    if (!isPending && prompt.trim()) {
+    if (!isPending && (prompt.trim() || pendingImage)) {
       void submitPrompt();
     }
   }
@@ -831,12 +887,7 @@ export function ChatShell({
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img alt="Selected file preview" src={pendingImage.previewUrl} />
             <button
-              onClick={() =>
-                setPendingImage((prev) => {
-                  revokePendingPreview(prev);
-                  return null;
-                })
-              }
+              onClick={clearPendingImage}
               type="button"
             >
               Remove
@@ -853,6 +904,7 @@ export function ChatShell({
           <input
             accept="image/png,image/jpeg,image/webp,image/heic,image/heif"
             id="image-input"
+            ref={imageInputRef}
             onChange={(event) =>
               void handleImageChange(
                 event.target.files?.[0] ?? null,
@@ -862,15 +914,17 @@ export function ChatShell({
             type="file"
           />
           <textarea
+            ref={promptTextareaRef}
             onChange={(event) => setPrompt(event.target.value)}
             onKeyDown={handlePromptKeyDown}
-            placeholder="Ask anything..."
+            onPaste={handlePromptPaste}
+            placeholder="Ask anything, or paste an image..."
             rows={1}
             value={prompt}
           />
           <button
             className="primary-button composer-send"
-            disabled={isPending || prompt.trim().length === 0}
+            disabled={isPending || (prompt.trim().length === 0 && !pendingImage)}
             onClick={() => void submitPrompt()}
             type="button"
           >
@@ -924,9 +978,9 @@ export function ChatShell({
               ) : null}
               {message.role === "assistant" ? (
                 <MessageContent content={message.content} />
-              ) : (
+              ) : message.content ? (
                 <p className="user-message-text">{message.content}</p>
-              )}
+              ) : null}
               <div className="message-actions">
                 <button
                   aria-label="Copy message"

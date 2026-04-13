@@ -31,10 +31,11 @@ export async function POST(request: Request) {
   }
 
   const body = (await request.json()) as ChatRequest;
-  const prompt = body.prompt?.trim();
+  const prompt = body.prompt?.trim() ?? "";
+  const hasImage = Boolean(body.image);
 
-  if (!prompt) {
-    return NextResponse.json({ error: "Prompt is required." }, { status: 400 });
+  if (!prompt && !hasImage) {
+    return NextResponse.json({ error: "Prompt or image is required." }, { status: 400 });
   }
 
   let conversationId: string;
@@ -50,7 +51,11 @@ export async function POST(request: Request) {
 
     history = existingHistory;
   } else {
-    conversationId = await createConversation(user.id, prompt, prompt);
+    conversationId = await createConversation(
+      user.id,
+      prompt || "Image upload",
+      prompt || "Image upload"
+    );
   }
 
   await appendMessage({

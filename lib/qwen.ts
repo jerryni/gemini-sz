@@ -3,7 +3,7 @@ import { getRequestEnv } from "@/lib/env";
 import type { MessageRecord } from "@/lib/db";
 
 const chatInputSchema = z.object({
-  prompt: z.string().min(1).max(5000),
+  prompt: z.string().max(5000).default(""),
   image: z
     .object({
       mimeType: z.string().min(1).max(100),
@@ -39,18 +39,23 @@ function buildQwenMessageContent(input: {
     return input.content;
   }
 
-  return [
+  const contentParts: QwenMessageContent = [
     {
       type: "image_url",
       image_url: {
         url: `data:${input.imageMimeType};base64,${input.imageBase64}`
       }
-    },
-    {
-      type: "text",
-      text: input.content
     }
   ];
+
+  if (input.content) {
+    contentParts.push({
+      type: "text",
+      text: input.content
+    });
+  }
+
+  return contentParts;
 }
 
 function buildHistoryMessages(messages: MessageRecord[]) {
