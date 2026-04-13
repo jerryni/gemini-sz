@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { resolveDefaultQwenModel } from "@/lib/chat-models";
 import { getRequestEnv } from "@/lib/env";
 import type { MessageRecord } from "@/lib/db";
 
@@ -96,11 +97,7 @@ export function resolveQwenApiKey(env: CloudflareEnv) {
 }
 
 export function resolveQwenModel(env: CloudflareEnv, hasImage: boolean) {
-  if (hasImage) {
-    return env.QWEN_IMAGE_MODEL?.trim() || env.QWEN_MODEL?.trim() || "qwen-vl-plus";
-  }
-
-  return env.QWEN_TEXT_MODEL?.trim() || env.QWEN_MODEL?.trim() || "qwen-plus";
+  return resolveDefaultQwenModel(env, hasImage);
 }
 
 export async function runQwenChat(

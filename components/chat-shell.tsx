@@ -2,7 +2,6 @@
 
 import {
   useEffect,
-  useMemo,
   useRef,
   useState,
   type ClipboardEvent,
@@ -28,7 +27,7 @@ import {
 } from "lucide-react";
 import { MessageContent } from "@/components/message-content";
 import { compressImageFileForUpload } from "@/lib/compress-upload-image";
-import { mergeGeminiModelOptions } from "@/lib/gemini-models";
+import type { ChatModelOption, ChatProvider } from "@/lib/chat-models";
 
 type ConversationSummary = {
   id: string;
@@ -47,10 +46,11 @@ type ChatMessage = {
 };
 
 type Props = {
+  availableModels: ChatModelOption[];
+  defaultModelId: string;
   initialConversations: ConversationSummary[];
   userLabel: string;
   isAdmin: boolean;
-  configuredGeminiModel: string;
 };
 
 type PendingImage = {
@@ -65,6 +65,7 @@ type GroupedConversations = {
 };
 
 type UsageSummary = {
+  provider: ChatProvider;
   model: string;
   apiKeyLabel: string;
   apiKeyLast4: string | null;
@@ -193,24 +194,15 @@ function UsageMeter({ label, value, limit, helper }: UsageMeterProps) {
 }
 
 export function ChatShell({
+  availableModels,
+  defaultModelId,
   initialConversations,
   userLabel,
-  isAdmin,
-  configuredGeminiModel
+  isAdmin
 }: Props) {
-  const modelOptions = useMemo(
-    () => mergeGeminiModelOptions(configuredGeminiModel),
-    [configuredGeminiModel]
+  const [selectedModelId, setSelectedModelId] = useState(
+    () => defaultModelId || availableModels[0]?.id || "gemini-2.5-flash"
   );
-
-  const [selectedModelId, setSelectedModelId] = useState(() => {
-    const options = mergeGeminiModelOptions(configuredGeminiModel);
-    const configured = configuredGeminiModel.trim();
-    if (configured && options.some((entry) => entry.id === configured)) {
-      return configured;
-    }
-    return options[0]?.id ?? "gemini-2.5-flash";
-  });
 
   const [conversations, setConversations] = useState(initialConversations);
   const [conversationId, setConversationId] = useState<string | null>(null);
@@ -235,6 +227,10 @@ export function ChatShell({
   const currentConversation =
     conversations.find((conversation) => conversation.id === conversationId) ?? null;
   const groupedConversations = groupConversations(conversations);
+  const selectedModel =
+    availableModels.find((entry) => entry.id === selectedModelId) ?? null;
+  const selectedProvider = selectedModel?.provider ?? "gemini";
+  const selectedProviderLabel = selectedProvider === "qwen" ? "Qwen" : "Gemini";
 
   useEffect(() => {
     setIsMounted(true);
@@ -678,15 +674,18 @@ export function ChatShell({
 
         <div className="settings-panel-copy">
           <p className="eyebrow">Model</p>
-          <h2>Gemini model</h2>
-          <p>Choose which model handles new messages in this browser.</p>
+          <h2>Chat model</h2>
+          <p>
+            Choose which model handles new messages in this browser. Qwen switches
+            between text and vision automatically.
+          </p>
           <select
-            aria-label="Gemini model"
+            aria-label="Chat model"
             className="admin-select settings-model-select"
             onChange={(event) => setSelectedModelId(event.target.value)}
             value={selectedModelId}
           >
-            {modelOptions.map((entry) => (
+            {availableModels.map((entry) => (
               <option key={entry.id} value={entry.id}>
                 {entry.label}
               </option>
@@ -696,10 +695,11 @@ export function ChatShell({
 
         <div className="settings-panel-copy">
           <p className="eyebrow">Usage tracking</p>
-          <h2>Gemini quota (this API key)</h2>
+          <h2>{selectedProviderLabel} quota (this API key)</h2>
           <p>
-            Numbers below count only traffic from this app for your current Gemini API key. Other
-            keys or Google AI Studio usage are not included.
+            {selectedProvider === "qwen"
+              ? "Numbers below count only traffic from this app for your current Qwen API key."
+              : "Numbers below count only traffic from this app for your current Gemini API key. Other keys or Google AI Studio usage are not included."}
           </p>
         </div>
 
@@ -727,15 +727,17 @@ export function ChatShell({
                   <span className="eyebrow">Model</span> {usageSummary.model}
                 </p>
               </div>
-              <a
-                className="ghost-button"
-                href="https://aistudio.google.com/"
-                rel="noreferrer"
-                target="_blank"
-              >
-                <ChartNoAxesColumn size={16} />
-                Open AI Studio
-              </a>
+              {usageSummary.provider === "gemini" ? (
+                <a
+                  className="ghost-button"
+                  href="https://aistudio.google.com/"
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  <ChartNoAxesColumn size={16} />
+                  Open AI Studio
+                </a>
+              ) : null}
             </div>
 
             <UsageMeter
@@ -745,13 +747,17 @@ export function ChatShell({
               value={usageSummary.todayRequests}
             />
             <UsageMeter
-              helper="Minute-level request pressure for this API key and model."
+              helper={
+                usageSummary.provider === "qwen"
+                  ? "Minute-level request pressure for this API key across Qwen text and vision traffic."
+                  : "Minute-level request pressure for this API key and model."
+              }
               label="This minute requests"
               limit={usageSummary.minuteRequestLimit}
               value={usageSummary.minuteRequests}
             />
             <UsageMeter
-              helper={`Approximate token budget tracked from Gemini usage metadata. Today: ${formatCompactNumber(
+              helper={`Approximate token budget tracked from ${usageSummary.provider === "qwen" ? "Qwen" : "Gemini"} usage metadata. Today: ${formatCompactNumber(
                 usageSummary.todayTokens
               )} tokens.`}
               label="This minute tokens"
@@ -918,7 +924,7 @@ export function ChatShell({
             onChange={(event) => setPrompt(event.target.value)}
             onKeyDown={handlePromptKeyDown}
             onPaste={handlePromptPaste}
-            placeholder="Ask anything, or paste an image..."
+            placeholder="Ask anything..."
             rows={1}
             value={prompt}
           />

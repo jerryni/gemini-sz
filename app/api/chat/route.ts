@@ -67,7 +67,11 @@ export async function POST(request: Request) {
   });
 
   const env = await getRequestEnv();
-  const provider = resolveChatProvider(request);
+  const provider = resolveChatProvider({
+    request,
+    bodyModel: body.model,
+    env
+  });
 
   let resolvedModel: string;
   try {

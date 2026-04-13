@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
-import { resolveChatModel, resolveChatProvider } from "@/lib/chat-provider";
+import { resolveChatProvider } from "@/lib/chat-provider";
+import { resolveUsageModelSelection } from "@/lib/chat-models";
 import { getUsageSummary } from "@/lib/db";
 import { getRequestEnv } from "@/lib/env";
 import { resolveGeminiApiKeyForUser } from "@/lib/gemini-key-resolve";
@@ -23,16 +24,15 @@ export async function GET(request: Request) {
   }
 
   const env = await getRequestEnv();
-  const provider = resolveChatProvider(request);
   const modelParam = new URL(request.url).searchParams.get("model") ?? undefined;
+  const provider = resolveChatProvider({ request, bodyModel: modelParam, env });
 
-  let summaryModel: string;
+  let usageSelection;
   try {
-    summaryModel = resolveChatModel({
+    usageSelection = resolveUsageModelSelection({
       request,
       bodyModel: modelParam,
-      env,
-      hasImage: false
+      env
     });
   } catch {
     return NextResponse.json({ error: "Unsupported model." }, { status: 400 });
@@ -81,7 +81,10 @@ export async function GET(request: Request) {
     };
   }
 
-  const summary = await getUsageSummary(user.id, summaryModel, keyContext);
+  const summary = await getUsageSummary(user.id, usageSelection.model, usageSelection.modelIds, keyContext);
 
-  return NextResponse.json(summary);
+  return NextResponse.json({
+    ...summary,
+    provider
+  });
 }

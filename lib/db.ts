@@ -517,12 +517,13 @@ function getPacificWindowRanges(now = new Date()) {
 
 async function getUsageAggregate(
   userId: string,
-  model: string,
+  modelIds: string[],
   geminiKeyId: string | null,
   start: string,
   end: string
 ) {
   const env = await getRequestEnv();
+  const placeholders = modelIds.map(() => "?").join(", ");
 
   const row = await env.DB.prepare(
     `SELECT
@@ -530,12 +531,12 @@ async function getUsageAggregate(
       COALESCE(SUM(total_tokens), 0) AS totalTokens
     FROM gemini_usage_events
     WHERE user_id = ?
-      AND model = ?
+      AND model IN (${placeholders})
       AND created_at >= ?
       AND created_at < ?
       AND COALESCE(gemini_key_id, '') = COALESCE(?, '')`
   )
-    .bind(userId, model, start, end, geminiKeyId)
+    .bind(userId, ...modelIds, start, end, geminiKeyId)
     .first<UsageAggregateRow>();
 
   return {
@@ -553,6 +554,7 @@ export type UsageSummaryKeyContext = {
 export async function getUsageSummary(
   userId: string,
   model: string,
+  modelIds: string[],
   keyContext: UsageSummaryKeyContext
 ): Promise<UsageSummary> {
   await ensureAppSchema();
@@ -563,14 +565,14 @@ export async function getUsageSummary(
   const [today, minute] = await Promise.all([
     getUsageAggregate(
       userId,
-      model,
+      modelIds,
       keyContext.geminiKeyId,
       dayStartIso,
       nextDayStartIso
     ),
     getUsageAggregate(
       userId,
-      model,
+      modelIds,
       keyContext.geminiKeyId,
       minuteStartIso,
       nextMinuteStartIso
