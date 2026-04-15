@@ -6,7 +6,7 @@
     "dev": "next dev --port 5555",
     "build": "next build",
     "preview": "opennextjs-cloudflare build && wrangler dev",
-    "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+    "d": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
     "migrate": "npx wrangler d1 execute gemini-sz-db --local --file=./migrations/0001_init.sql",
 		"migrate:db": "wrangler d1 migrations apply DB --local",
 		"migrate:db-remote": "wrangler d1 migrations apply DB --remote",
