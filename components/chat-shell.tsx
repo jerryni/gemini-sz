@@ -87,6 +87,24 @@ type UsageMeterProps = {
   helper: string;
 };
 
+const MODEL_PREFERENCE_STORAGE_KEY = "chat-shell:selected-model";
+
+function resolveModelId(
+  modelId: string | null | undefined,
+  availableModels: ChatModelOption[],
+  fallbackModelId: string
+) {
+  if (modelId && availableModels.some((entry) => entry.id === modelId)) {
+    return modelId;
+  }
+
+  if (availableModels.some((entry) => entry.id === fallbackModelId)) {
+    return fallbackModelId;
+  }
+
+  return availableModels[0]?.id ?? fallbackModelId;
+}
+
 function formatConversationTitle(title: string) {
   const normalized = title.replace(/\s+/g, " ").trim();
   return normalized || "Untitled chat";
@@ -201,7 +219,7 @@ export function ChatShell({
   isAdmin
 }: Props) {
   const [selectedModelId, setSelectedModelId] = useState(
-    () => defaultModelId || availableModels[0]?.id || "gemini-2.5-flash"
+    () => resolveModelId(defaultModelId, availableModels, "gemini-3.1-flash-lite-preview")
   );
 
   const [conversations, setConversations] = useState(initialConversations);
@@ -218,6 +236,7 @@ export function ChatShell({
   const [isUsageLoading, setIsUsageLoading] = useState(false);
   const [usageError, setUsageError] = useState<string | null>(null);
   const [isMounted, setIsMounted] = useState(false);
+  const [hasLoadedModelPreference, setHasLoadedModelPreference] = useState(false);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [deletingConversationId, setDeletingConversationId] = useState<string | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
@@ -236,6 +255,26 @@ export function ChatShell({
   useEffect(() => {
     setIsMounted(true);
   }, []);
+
+  useEffect(() => {
+    const savedModelId = window.localStorage.getItem(MODEL_PREFERENCE_STORAGE_KEY);
+    const resolvedModelId = resolveModelId(
+      savedModelId,
+      availableModels,
+      defaultModelId || "gemini-3.1-flash-lite-preview"
+    );
+
+    setSelectedModelId(resolvedModelId);
+    setHasLoadedModelPreference(true);
+  }, [availableModels, defaultModelId]);
+
+  useEffect(() => {
+    if (!hasLoadedModelPreference) {
+      return;
+    }
+
+    window.localStorage.setItem(MODEL_PREFERENCE_STORAGE_KEY, selectedModelId);
+  }, [hasLoadedModelPreference, selectedModelId]);
 
   useEffect(() => {
     if (!isMounted || conversationId || hasAutoFocusedEmptyChatRef.current) {
@@ -603,7 +642,6 @@ export function ChatShell({
   }
 
   function startNewChat() {
-    setSelectedModelId(defaultModelId || availableModels[0]?.id || "gemini-2.5-flash");
     setConversationId(null);
     setMessages([]);
     setError(null);

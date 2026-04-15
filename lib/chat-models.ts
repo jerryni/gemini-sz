@@ -14,6 +14,8 @@ export type UsageModelSelection = {
   provider: ChatProvider;
 };
 
+export const DEFAULT_CHAT_MODEL_ID = "gemini-3.1-flash-lite-preview";
+
 const GEMINI_MODEL_PRESETS: ChatModelOption[] = [
   { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", provider: "gemini" },
   {
@@ -211,20 +213,16 @@ export function resolveDefaultChatModel(input: {
   env: CloudflareEnv;
   hasImage: boolean;
 }) {
-  if (getChatModelOptions(input.env).some((option) => option.id === "qwen")) {
-    return "qwen";
+  if (getChatModelOptions(input.env).some((option) => option.id === DEFAULT_CHAT_MODEL_ID)) {
+    return DEFAULT_CHAT_MODEL_ID;
   }
 
-  const provider = resolveChatProvider({
-    request: input.request,
-    env: input.env
-  });
-
-  if (provider === "qwen") {
-    return "qwen";
+  const configuredGeminiModel = trimModelId(input.env.GEMINI_MODEL);
+  if (configuredGeminiModel) {
+    return configuredGeminiModel;
   }
 
-  return resolveGeminiModelForRequest(undefined, input.env.GEMINI_MODEL);
+  return getChatModelOptions(input.env)[0]?.id ?? DEFAULT_CHAT_MODEL_ID;
 }
 
 export function resolveUsageModelSelection(input: {
